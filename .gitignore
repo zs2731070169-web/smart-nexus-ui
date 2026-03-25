@@ -1,0 +1,8 @@
+/.jbeval/
+/.claude/
+/.idea/
+__pycache__/
+/dist/
+/node_modules/
+.claude/
+/electron-dist/
