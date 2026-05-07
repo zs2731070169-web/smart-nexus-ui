@@ -63,7 +63,10 @@ const createAiMessage = () => {
     processing: '',
     answer: '',
     isStreaming: true,
-    thinkingExpanded: true
+    thinkingExpanded: true,
+    // 处理计时：开始时间戳与最终耗时（毫秒）；用于在过程处理区右侧显示计时
+    processingStartedAt: null,
+    processingElapsed: null
   })
 }
 
@@ -104,6 +107,9 @@ const messages = ref(initMessages())
 const inputText = ref('')
 const isStreaming = ref(false)
 const messageListRef = ref(null)
+// 计时心跳：流式期间每 200ms 自增，用于驱动处理计时器实时刷新
+const nowTick = ref(0)
+let tickTimer = null
 // 用户是否主动上翻（true 时跳过自动滚底）
 const userScrolledUp = ref(false)
 
@@ -133,6 +139,30 @@ const renderMarkdown = (content) => {
   return content ? marked.parse(content) : ''
 }
 
+/**
+ * 计算 AI 消息当前应展示的处理耗时（毫秒）
+ * - 已完成：返回固化后的 processingElapsed
+ * - 进行中：基于 nowTick 实时差值（依赖响应式心跳触发刷新）
+ */
+const getProcessingElapsed = (msg) => {
+  if (msg.processingElapsed != null) return msg.processingElapsed
+  if (msg.processingStartedAt != null) {
+    // eslint-disable-next-line no-unused-expressions
+    nowTick.value
+    return Date.now() - msg.processingStartedAt
+  }
+  return null
+}
+
+/** 格式化耗时：< 60s 显示 "Xs"，否则 "Xm Ys" */
+const formatElapsed = (ms) => {
+  if (ms == null) return ''
+  if (ms < 60000) return `${Math.floor(ms / 1000)}s`
+  const m = Math.floor(ms / 60000)
+  const s = Math.floor((ms % 60000) / 1000)
+  return `${m}m ${s}s`
+}
+
 const sendMessage = async () => {
   const query = inputText.value.trim()
   if (!query || isStreaming.value) return
@@ -150,6 +180,10 @@ const sendMessage = async () => {
   const aiMsg = createAiMessage()
   messages.value.push(aiMsg)
   isStreaming.value = true
+  // 启动计时心跳，确保流式期间处理计时器实时刷新
+  if (!tickTimer) {
+    tickTimer = setInterval(() => { nowTick.value++ }, 200)
+  }
   scrollToBottom()
 
   try {
@@ -174,9 +208,17 @@ const sendMessage = async () => {
       if (render_type === 'THINKING') {
         aiMsg.thinking += text
       } else if (render_type === 'PROCESSING') {
+        // 第一个 PROCESSING 增量到达时记录起始时间戳
+        if (aiMsg.processingStartedAt == null) aiMsg.processingStartedAt = Date.now()
         aiMsg.processing += text
       } else if (render_type === 'ANSWER') {
-        if (!aiMsg.answer) aiMsg.thinkingExpanded = false
+        if (!aiMsg.answer) {
+          aiMsg.thinkingExpanded = false
+          // 最终回答开始 -> 固化处理耗时
+          if (aiMsg.processingStartedAt != null && aiMsg.processingElapsed == null) {
+            aiMsg.processingElapsed = Date.now() - aiMsg.processingStartedAt
+          }
+        }
         aiMsg.answer += text
       }
       scrollToBottom()
@@ -184,8 +226,16 @@ const sendMessage = async () => {
   } catch {
     aiMsg.answer = '抱歉，对话服务出现异常，请稍后重试。'
   } finally {
+    // 流式结束兜底固化耗时（如出现异常或无 ANSWER 阶段时）
+    if (aiMsg.processingStartedAt != null && aiMsg.processingElapsed == null) {
+      aiMsg.processingElapsed = Date.now() - aiMsg.processingStartedAt
+    }
     aiMsg.isStreaming = false
     isStreaming.value = false
+    if (tickTimer) {
+      clearInterval(tickTimer)
+      tickTimer = null
+    }
     scrollToBottom()
     saveMessages()
   }
@@ -309,6 +359,14 @@ const maskedPhone = computed(() =>
                 <CircleCheck v-else/>
               </el-icon>
               <span class="processing-text">{{ msg.processing }}</span>
+              <!-- 处理计时器：流式中实时更新，回答开始后定格 -->
+              <span
+                  v-if="getProcessingElapsed(msg) != null"
+                  class="processing-timer"
+                  :class="{ 'is-running': msg.isStreaming && !msg.answer }"
+              >
+                {{ formatElapsed(getProcessingElapsed(msg)) }}
+              </span>
             </div>
 
             <!-- 最终回答（ANSWER） -->
@@ -620,8 +678,28 @@ $bg-white: #fff;
           }
 
           .processing-text {
+            flex: 1;
             line-height: 1.5;
             word-break: break-word;
+          }
+
+          // 处理计时器（右侧）
+          .processing-timer {
+            flex-shrink: 0;
+            margin-left: 8px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            background: rgba(64, 158, 255, 0.12);
+            color: $primary;
+            font-size: 12px;
+            font-family: 'Courier New', monospace;
+            font-variant-numeric: tabular-nums;
+            line-height: 1.4;
+            user-select: none;
+
+            &.is-running {
+              animation: timer-pulse 1.4s ease-in-out infinite;
+            }
           }
         }
 
@@ -794,6 +872,15 @@ $bg-white: #fff;
   30% {
     opacity: 1;
     transform: scale(1);
+  }
+}
+
+@keyframes timer-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
   }
 }
 
