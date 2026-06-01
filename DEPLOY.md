@@ -74,7 +74,104 @@ npm run electron:build
 
 ---
 
-## 四、前后端联通验证
+## 四、发布为 Web 站点（浏览器直接访问）
+
+除了 Electron 桌面客户端，前端也可以构建成静态文件，**部署到后端同一个 Nginx、同一个域名根路径 `/` 下**，用户用浏览器直接访问 `https://你的域名.com/`。
+
+### 4.1 原理
+
+浏览器生产模式下，前端用**同源相对路径** `/smart/nexus/consultant`、`/smart/nexus/knowledge` 访问后端（见 `src/config/api.js`），由后端 Nginx 已配好的代理（含 SSE 流式配置）转发。因此：
+
+- **同源、无 CORS**：前端和后端同一个域名，浏览器不产生跨域。
+- **复用后端代理**：不需要在 Nginx 里为前端重复写 `/api`、`/consultant` 代理，直接用后端既有的 `/smart/nexus/*`。
+- **无需新证书**：和后端共用同一张 HTTPS 证书。
+
+> 三种运行形态的 API 地址来源对比：
+> | 形态 | API 基地址 | 配置来源 |
+> |------|-----------|---------|
+> | `npm run dev` 浏览器调试 | `/api`、`/consultant` | `.env` + Vite 代理 |
+> | **Web 站点（本章）** | `/smart/nexus/*`（同源） | 无需配置，硬编码同源路径 |
+> | Electron 桌面客户端 | 后端绝对 URL | `config.json` |
+
+### 4.2 在服务器上拉取代码并构建（在服务器执行）
+
+**① 安装 Node.js（服务器首次构建需要，已装可跳过）：**
+
+```bash
+# 通过 NodeSource 安装 Node.js 20 LTS
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+node -v && npm -v        # 验证
+```
+
+**② 拉取前端代码并构建：**
+
+```bash
+cd /opt
+git clone https://github.com/zs2731070169-web/smart-nexus-ui.git
+cd smart-nexus-ui
+npm install
+npm run build            # 产物在 /opt/smart-nexus-ui/dist/
+```
+
+> 构建产物 `dist/` 直接被 Nginx 容器挂载使用（见 4.3），无需再复制到别处。
+
+### 4.3 修改后端 Nginx，挂载静态文件（在服务器执行）
+
+**① `deploy/nginx/nginx.conf`**：在 HTTPS `server { listen 443 ssl; ... }` 块内，两个 `/smart/nexus/*` location **之外**，新增根 location 服务前端静态文件：
+
+```nginx
+        # consultant
+        location /smart/nexus/consultant { ... }   # 保持原样
+
+        # knowledge
+        location /smart/nexus/knowledge { ... }    # 保持原样
+
+        # 前端静态站点（新增）
+        location / {
+            root /usr/share/nginx/html;
+            index index.html;
+            try_files $uri $uri/ /index.html;
+        }
+```
+
+> Nginx 按最长前缀匹配，`/smart/nexus/consultant`、`/smart/nexus/knowledge` 比 `/` 更长，会**优先**命中后端代理；其余请求才落到静态站点，互不抢占。
+
+**② `deploy/docker/docker-compose.yml`**：给 `nginx` 服务新增一个挂载，把前端构建产物 `dist/` 映射进容器（使用绝对路径指向 4.2 的 clone 目录）：
+
+```yaml
+  nginx:
+    image: nginx:alpine
+    ports: ["443:443", "80:80"]
+    volumes:
+      - ../nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ../nginx/ssl:/etc/nginx/ssl
+      - /opt/smart-nexus-ui/dist:/usr/share/nginx/html   # 新增：前端构建产物
+```
+
+### 4.4 重启 Nginx 使配置生效
+
+```bash
+cd /opt/smart_nexus/deploy/docker
+docker compose up -d nginx            # 新增了挂载需重建容器，不能只 restart
+```
+
+完成后浏览器访问 `https://你的域名.com/` 即可看到前端登录页。
+
+### 4.5 后续更新发布
+
+前端有更新时，在服务器上拉取最新代码并重新构建，**无需重启容器**（产物原地更新，静态文件实时生效，用户浏览器强刷 `Ctrl+F5` 加载新版本）：
+
+```bash
+cd /opt/smart-nexus-ui
+git pull
+npm install              # 依赖无变化可省略
+npm run build            # 覆盖 dist/，Nginx 立即生效
+```
+
+---
+
+## 五、前后端联通验证
 
 1. 安装并打开 Electron 客户端，进入登录页
 2. 输入手机号，点击「获取验证码」，在服务器日志中确认收到请求：
@@ -86,7 +183,7 @@ npm run electron:build
 
 ---
 
-## 五、更新发布
+## 六、更新发布（Electron 客户端）
 
 前端是 Electron 桌面客户端，更新需要重新打包并分发安装包。在**本地 Windows 开发机**上执行：
 
@@ -100,7 +197,7 @@ npm run electron:build
 
 ---
 
-## 六、常见问题排错
+## 七、常见问题排错
 
 ### `npm run dev` 报 `ECONNREFUSED` 或接口返回 500
 
