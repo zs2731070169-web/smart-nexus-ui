@@ -118,7 +118,20 @@ npm run build            # 产物在 /opt/smart-nexus-ui/dist/
 
 ### 4.3 修改后端 Nginx，挂载静态文件（在服务器执行）
 
-**① `deploy/nginx/nginx.conf`**：在 HTTPS `server { listen 443 ssl; ... }` 块内，两个 `/smart/nexus/*` location **之外**，新增根 location 服务前端静态文件：
+**① `deploy/nginx/nginx.conf`** 需改两处：
+
+**(a) 在 `http {` 开头引入 MIME 类型表**（**必须**，否则 `.css`/`.js` 会被当成 `text/plain` 返回，浏览器拒绝加载样式表与模块脚本）：
+
+```nginx
+http {
+    include       /etc/nginx/mime.types;     # 正确识别 .css/.js 等静态资源 MIME 类型
+    default_type  application/octet-stream;   # 兜底类型
+
+    # ...（原有 map / upstream / server 等保持不变）
+}
+```
+
+**(b) 在 HTTPS `server { listen 443 ssl; ... }` 块内，两个 `/smart/nexus/*` location **之外**，新增根 location 服务前端静态文件：
 
 ```nginx
         # consultant
@@ -127,7 +140,7 @@ npm run build            # 产物在 /opt/smart-nexus-ui/dist/
         # knowledge
         location /smart/nexus/knowledge { ... }    # 保持原样
 
-        # 前端静态站点（新增）
+        # 前端静态站点
         location / {
             root /usr/share/nginx/html;
             index index.html;
@@ -146,14 +159,15 @@ npm run build            # 产物在 /opt/smart-nexus-ui/dist/
     volumes:
       - ../nginx/nginx.conf:/etc/nginx/nginx.conf
       - ../nginx/ssl:/etc/nginx/ssl
-      - /opt/smart-nexus-ui/dist:/usr/share/nginx/html   # 新增：前端构建产物
+      - /opt/smart-nexus-ui/dist:/usr/share/nginx/html   # 前端构建产物
 ```
 
 ### 4.4 重启 Nginx 使配置生效
 
 ```bash
 cd /opt/smart_nexus/deploy/docker
-docker compose up -d nginx            # 新增了挂载需重建容器，不能只 restart
+docker compose up -d nginx            # docker-compose.yml新增了挂载需重建容器，不能只 restart
+docker compose restart nginx          # 把现有容器停掉再启动
 ```
 
 完成后浏览器访问 `https://你的域名.com/` 即可看到前端登录页。
