@@ -14,6 +14,7 @@ import {
 } from '@element-plus/icons-vue'
 import {marked} from 'marked'
 import {streamChat} from '../../api/consultant'
+import {ensureGeolocation, getCachedLocation} from '../../utils/geolocation'
 
 // ===== Markdown 渲染配置 =====
 const IMAGE_URL_RE = /\.(png|jpe?g|gif|webp|svg|bmp)(\?[^\s)]*)?$/i
@@ -187,7 +188,7 @@ const sendMessage = async () => {
   scrollToBottom()
 
   try {
-    for await (const event of streamChat(query, props.sessionId)) {
+    for await (const event of streamChat(query, props.sessionId, getCachedLocation())) {
       const {data, status, metadata} = event
 
       if (status === 'FINISHED') {
@@ -244,6 +245,8 @@ const sendMessage = async () => {
 onMounted(() => {
   // 切换到其他应用窗口时立即保存，防止页面意外刷新丢失消息
   window.addEventListener('blur', saveMessages)
+  // 进入对话页即预热定位：尽早弹一次授权框并刷新缓存，发消息时同步取用，不阻塞 UI
+  ensureGeolocation()
 })
 
 onUnmounted(() => {

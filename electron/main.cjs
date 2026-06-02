@@ -75,6 +75,12 @@ function createWindow() {
     win.loadFile(path.join(__dirname, '../dist/index.html'))
   }
 
+  // 放行地理定位权限：Electron 下 navigator.geolocation 默认被拒，需主进程显式授予；其余权限维持默认拒绝
+  // 注意：Chromium 网络定位可能需 Google API key，macOS/Windows 还需 OS 层已授予应用定位权限，否则 getCurrentPosition 仍会失败
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    callback(permission === 'geolocation')
+  })
+
   win.once('ready-to-show', () => win.show())
 
   // 拦截所有关闭请求，弹窗确认防止误操作

@@ -42,18 +42,27 @@ export const queryChatHistory = async () => {
  * axios 通过 onDownloadProgress 回调读取 XHR responseText 增量实现 SSE 消费。
  * @param {string} query - 用户问题
  * @param {string} sessionId - 会话 ID（前端生成）
+ * @param {{lng:number, lat:number, coordType:string}|null} [location] - 前端 GPS 定位（WGS84），用于导航起点；无则不携带
  * @yields {Object} StreamMessages 数据帧
  */
-export async function* streamChat(query, sessionId) {
+export async function* streamChat(query, sessionId, location = null) {
     let processedLength = 0
     const pendingEvents = []
     let streamDone = false
     let notifyNewData = null
     let streamError = null
 
+    // 有定位时附带经纬度（WGS84），交由后端转换坐标系并作为导航起点；无则不携带，后端走降级链
+    const requestBody = {query, session_id: sessionId}
+    if (location && Number.isFinite(location.lng) && Number.isFinite(location.lat)) {
+        requestBody.lng = location.lng
+        requestBody.lat = location.lat
+        requestBody.coord_type = location.coordType || 'wgs84'
+    }
+
     const axiosPromise = consultantRequest.post(
         '/chat',
-        {query, session_id: sessionId},
+        requestBody,
         {
             responseType: 'text', // 禁止 axios 尝试 JSON 解析 SSE 流
             onDownloadProgress(evt) {
